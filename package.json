@@ -1,0 +1,43 @@
+{
+  "name": "comfyui-launcher-next",
+  "version": "0.1.0",
+  "private": false,
+  "description": "A clean Windows desktop launcher for local ComfyUI installations.",
+  "main": "dist-electron/main.js",
+  "author": "lhhkuki",
+  "license": "MIT",
+  "homepage": "https://github.com/lhhkuki/comfyui-launcher-next#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lhhkuki/comfyui-launcher-next.git"
+  },
+  "bugs": {
+    "url": "https://github.com/lhhkuki/comfyui-launcher-next/issues"
+  },
+  "scripts": {
+    "dev": "npm-run-all -p dev:vite dev:electron",
+    "dev:vite": "vite --host 127.0.0.1",
+    "dev:electron": "wait-on http://127.0.0.1:5173 && tsc -p electron/tsconfig.json && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .",
+    "build": "tsc -p electron/tsconfig.json && vite build",
+    "dist:win": "npm run build && powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-win.ps1",
+    "start": "npm run build && electron .",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "^4.7.0",
+    "lucide-react": "^0.468.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "vite": "^5.4.21"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "@types/react": "^18.3.27",
+    "@types/react-dom": "^18.3.7",
+    "cross-env": "^7.0.3",
+    "electron": "^33.4.11",
+    "npm-run-all": "^4.1.5",
+    "typescript": "^5.9.3",
+    "wait-on": "^8.0.5"
+  }
+}
