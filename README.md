@@ -5,7 +5,7 @@
 <p align="center">
   <a href="#中文说明"><b>中文</b></a>
   ·
-  <a href="#english"><b>English</b></a>
+  <a href="./README.en.md"><b>English</b></a>
 </p>
 
 <p align="center">
@@ -213,86 +213,6 @@ npm run dist:win
 - 便携版配置迁移工具。
 - Windows 签名安装包。
 - 更多语言和主题。
-
-<a id="english"></a>
-
-## English
-
-<p align="center">
-  <a href="#中文说明"><b>中文</b></a>
-  ·
-  <a href="#english"><b>English</b></a>
-</p>
-
-<p align="center">
-  <a href="#download">Download</a>
-  ·
-  <a href="#first-run">First Run</a>
-  ·
-  <a href="#features">Features</a>
-  ·
-  <a href="#development">Development</a>
-  ·
-  <a href="#license">License</a>
-</p>
-
-ComfyUI Launcher Next is a Windows desktop launcher and local workstation for your own ComfyUI installation.
-
-It does not bundle ComfyUI and does not import any third-party launcher configuration automatically. On first run, configure the folder that contains `main.py` and the Python executable used by that ComfyUI environment.
-
-<a id="features"></a>
-
-### Features
-
-- Manage multiple local ComfyUI environments.
-- Start, stop, and restart ComfyUI from a desktop UI.
-- Live runtime logs with filtering, copy, clear, and auto-follow.
-- Queue interrupt, queue clear, and memory release actions.
-- Launch arguments for port, CUDA device, VRAM mode, proxy, Hugging Face mirror, Manager, metadata, and custom args.
-- Mode management with enabled/disabled plugin lists.
-- Custom node management: scan, enable/disable, backup, restore, Git update, Git repair, bind remote, and install requirements.
-- Path references for models, plugins, workflows, input, output, and user folders.
-- Workflow JSON analysis based on locally installed plugins.
-- Model browser and output media browser.
-- Python environment checks and common dependency commands.
-- ComfyUI core Git status and update action.
-
-<a id="download"></a>
-
-### Download
-
-Download from [Releases](https://github.com/lhhkuki/comfyui-launcher-next/releases):
-
-```text
-ComfyUI.Launcher.Next.Setup.0.1.0.exe
-ComfyUI.Launcher.Next.0.1.0.Portable.zip
-```
-
-The installer is currently unsigned. Windows SmartScreen may show a warning.
-
-<a id="first-run"></a>
-
-### First Run
-
-1. Open **Settings**.
-2. Set **ComfyUI Path** to the folder containing `main.py`.
-3. Set **Python Path** to the Python executable used by your ComfyUI installation.
-4. Save the configuration.
-5. Open **Console** and click **Start**.
-
-<a id="development"></a>
-
-### Development
-
-```powershell
-npm install
-npm run dev
-npm run typecheck
-npm run build
-npm run dist:win
-```
-
-<a id="license"></a>
 
 ## License
 
