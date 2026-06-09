@@ -1,5 +1,31 @@
 # ComfyUI Launcher Next
 
+<a id="中文说明"></a>
+
+<p align="center">
+  <a href="#中文说明"><b>中文</b></a>
+  ·
+  <a href="#english"><b>English</b></a>
+</p>
+
+<p align="center">
+  <a href="#下载">下载</a>
+  ·
+  <a href="#首次使用">首次使用</a>
+  ·
+  <a href="#核心功能">核心功能</a>
+  ·
+  <a href="#插件维护">插件维护</a>
+  ·
+  <a href="#日志控制台">日志控制台</a>
+  ·
+  <a href="#媒体库">媒体库</a>
+  ·
+  <a href="#环境维护">环境维护</a>
+  ·
+  <a href="#开发">开发</a>
+</p>
+
 一个面向 Windows 本地 ComfyUI 用户的桌面启动器与工作站。
 
 ComfyUI Launcher Next 不是 ComfyUI 本体，也不内置任何整合包。它的目标是把日常启动、日志诊断、插件维护、模式切换、模型目录、输出媒体和 Python 环境维护集中到一个干净的桌面界面里。首次使用时，只需要在设置里选择你的 ComfyUI 目录和 Python 可执行文件。
@@ -188,11 +214,33 @@ npm run dist:win
 - Windows 签名安装包。
 - 更多语言和主题。
 
+<a id="english"></a>
+
 ## English
+
+<p align="center">
+  <a href="#中文说明"><b>中文</b></a>
+  ·
+  <a href="#english"><b>English</b></a>
+</p>
+
+<p align="center">
+  <a href="#download">Download</a>
+  ·
+  <a href="#first-run">First Run</a>
+  ·
+  <a href="#features">Features</a>
+  ·
+  <a href="#development">Development</a>
+  ·
+  <a href="#license">License</a>
+</p>
 
 ComfyUI Launcher Next is a Windows desktop launcher and local workstation for your own ComfyUI installation.
 
 It does not bundle ComfyUI and does not import any third-party launcher configuration automatically. On first run, configure the folder that contains `main.py` and the Python executable used by that ComfyUI environment.
+
+<a id="features"></a>
 
 ### Features
 
@@ -209,6 +257,8 @@ It does not bundle ComfyUI and does not import any third-party launcher configur
 - Python environment checks and common dependency commands.
 - ComfyUI core Git status and update action.
 
+<a id="download"></a>
+
 ### Download
 
 Download from [Releases](https://github.com/lhhkuki/comfyui-launcher-next/releases):
@@ -220,6 +270,8 @@ ComfyUI.Launcher.Next.0.1.0.Portable.zip
 
 The installer is currently unsigned. Windows SmartScreen may show a warning.
 
+<a id="first-run"></a>
+
 ### First Run
 
 1. Open **Settings**.
@@ -227,6 +279,8 @@ The installer is currently unsigned. Windows SmartScreen may show a warning.
 3. Set **Python Path** to the Python executable used by your ComfyUI installation.
 4. Save the configuration.
 5. Open **Console** and click **Start**.
+
+<a id="development"></a>
 
 ### Development
 
@@ -237,6 +291,8 @@ npm run typecheck
 npm run build
 npm run dist:win
 ```
+
+<a id="license"></a>
 
 ## License
 
