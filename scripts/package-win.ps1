@@ -3,7 +3,8 @@ $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 $release = Join-Path $root "release"
 $appName = "ComfyUI Launcher Next"
-$version = "0.1.0"
+$package = Get-Content (Join-Path $root "package.json") -Raw | ConvertFrom-Json
+$version = $package.version
 $appDir = Join-Path $release "$appName-win32-x64"
 $zipPath = Join-Path $release "$appName $version Portable.zip"
 $electronDist = Join-Path $root "node_modules\electron\dist"
@@ -40,7 +41,7 @@ if (!$makensis) {
 if ($makensis) {
   Push-Location $root
   try {
-    & $makensis "build\installer.nsi"
+    & $makensis "/DAPP_VERSION=$version" "build\installer.nsi"
   } finally {
     Pop-Location
   }
