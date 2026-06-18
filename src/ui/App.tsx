@@ -50,6 +50,7 @@ import type {
   PathReference,
   PathReferenceKind,
   PluginInfo,
+  PreflightResult,
   QueueStatus,
   RuntimeStatus,
   SystemStats,
@@ -59,6 +60,7 @@ import type {
 type ToolView = "console" | "logs" | "plugins" | "paths" | "workflow" | "models" | "media" | "environment" | "settings";
 type PluginFilter = "all" | "issues" | "disabled" | "requirements" | "git";
 type LogFilter = "all" | "errors" | "warnings";
+type LaunchPhase = "idle" | "checking" | "applying-mode" | "starting" | "running" | "stopping" | "failed";
 
 const tools: Array<{ id: ToolView; label: string; icon: typeof MonitorPlay }> = [
   { id: "console", label: "控制台", icon: MonitorPlay },
@@ -196,6 +198,9 @@ export function App() {
   const [modePreview, setModePreview] = useState<ModePreview>({ enable: [], disable: [], unchanged: [], missing: [] });
   const [workflow, setWorkflow] = useState<WorkflowAnalysisResult | null>(null);
   const [busy, setBusy] = useState(false);
+  const [launchPhase, setLaunchPhase] = useState<LaunchPhase>("idle");
+  const [lastPreflight, setLastPreflight] = useState<PreflightResult | null>(null);
+  const [lastLaunchError, setLastLaunchError] = useState("");
   const [message, setMessage] = useState("准备就绪");
   const [pluginSearch, setPluginSearch] = useState("");
   const [pluginFilter, setPluginFilter] = useState<PluginFilter>("all");
@@ -283,6 +288,25 @@ export function App() {
       (activeInstance.comfyuiPath && activeInstance.pythonPath ? 0 : 20)
   );
   const readinessTone = readinessScore >= 80 ? "ok" : readinessScore >= 55 ? "warn" : "bad";
+  const effectivePhase: LaunchPhase = status.running && launchPhase !== "stopping" ? "running" : launchPhase;
+  const phaseLabels: Record<LaunchPhase, string> = {
+    idle: "未启动",
+    checking: "检查中",
+    "applying-mode": "应用模式",
+    starting: "启动中",
+    running: "运行中",
+    stopping: "停止中",
+    failed: "启动失败"
+  };
+  const phaseTone: "ok" | "bad" | "warn" | undefined =
+    effectivePhase === "running" ? "ok" :
+    effectivePhase === "failed" ? "bad" :
+    effectivePhase === "idle" ? "bad" : "warn";
+  const launchBusy = ["checking", "applying-mode", "starting", "stopping"].includes(launchPhase);
+  const diagnosticChecks = lastPreflight?.checks || [];
+  const failedChecks = diagnosticChecks.filter((check) => check.status === "bad");
+  const warningChecks = diagnosticChecks.filter((check) => check.status === "warn");
+  const latestErrorLine = [...logs].reverse().find((line) => /error|failed|traceback|exception|ModuleNotFoundError|ImportError|EADDRINUSE|address already in use/i.test(line)) || "";
 
   useEffect(() => {
     window.launcher.config.load().then((loaded) => {
@@ -317,6 +341,14 @@ export function App() {
     refreshPackages();
     refreshCoreInfo();
   }, [activeInstance.id]);
+
+  useEffect(() => {
+    if (status.running) {
+      setLaunchPhase("running");
+    } else if (launchPhase === "running" || launchPhase === "stopping") {
+      setLaunchPhase("idle");
+    }
+  }, [status.running]);
 
   useEffect(() => {
     let cancelled = false;
@@ -360,6 +392,7 @@ export function App() {
       return result;
     } catch (error) {
       const text = error instanceof Error ? error.message : String(error);
+      setLastLaunchError(text);
       setMessage(text);
       alert(text);
       throw error;
@@ -436,6 +469,7 @@ export function App() {
   }
 
   async function startWithMode() {
+    return startComfyManaged();
     const checked = await runPreflight();
     if (!checked.ready) {
       setMessage("启动条件未通过，请先处理路径、Python 或端口占用问题。");
@@ -455,10 +489,74 @@ export function App() {
   }
 
   async function stopComfy() {
+    return stopComfyManaged();
     setStatus((await guarded("停止 ComfyUI", window.launcher.comfy.stop)) as RuntimeStatus);
   }
 
+  async function runPreflightManaged() {
+    setLaunchPhase("checking");
+    setLastLaunchError("");
+    const result = await guarded("启动检查", () => window.launcher.comfy.preflight(activeInstance));
+    setLastPreflight(result);
+    return result;
+  }
+
+  async function startComfyManaged() {
+    try {
+      const checked = await runPreflightManaged();
+      if (!checked.ready) {
+        setLaunchPhase("failed");
+        setMessage("启动条件未通过，请先处理路径、Python 或端口占用问题。");
+        switchView("console");
+        return;
+      }
+      if (!status.running) {
+        setLaunchPhase("applying-mode");
+        const applied = await guarded("应用模式", () => window.launcher.modes.apply(activeInstance, activeMode));
+        if (applied) setPlugins(applied as PluginInfo[]);
+      } else if (modePreview.enable.length || modePreview.disable.length) {
+        setMessage("ComfyUI 已在运行，已跳过插件移动。需要切换插件模式时请先停止服务。");
+      }
+      const synced = { ...config, instances: config.instances.map((item) => (item.id === activeInstance.id ? activeInstance : item)) };
+      await save(synced);
+      setLaunchPhase("starting");
+      const nextStatus = (await guarded("启动 ComfyUI", () => window.launcher.comfy.start(activeInstance))) as RuntimeStatus;
+      setStatus(nextStatus);
+      setLaunchPhase(nextStatus.running ? "running" : "failed");
+      if (!nextStatus.running) setLastLaunchError("启动命令已返回，但没有检测到运行中的 ComfyUI 进程。");
+      switchView(nextStatus.running ? "logs" : "console");
+    } catch (error) {
+      setLaunchPhase("failed");
+      setLastLaunchError(error instanceof Error ? error.message : String(error));
+      switchView("console");
+      throw error;
+    }
+  }
+
+  async function stopComfyManaged() {
+    try {
+      setLaunchPhase("stopping");
+      const nextStatus = (await guarded("停止 ComfyUI", window.launcher.comfy.stop)) as RuntimeStatus;
+      setStatus(nextStatus);
+      setLaunchPhase(nextStatus.running ? "running" : "idle");
+    } catch (error) {
+      setLaunchPhase(status.running ? "running" : "failed");
+      throw error;
+    }
+  }
+
+  async function restartComfyManaged() {
+    if (status.running) await stopComfyManaged();
+    await startComfyManaged();
+  }
+
+  async function releaseBlockedPort() {
+    const result = await guarded("释放端口", () => window.launcher.comfy.releasePort(activeInstance.port || "8188"));
+    setLastPreflight(result);
+  }
+
   async function restartComfy() {
+    return restartComfyManaged();
     if (status.running) {
       await stopComfy();
     }
@@ -684,7 +782,7 @@ export function App() {
             <h1>{displayName(activeInstance.name)}</h1>
             <span>{compactPath(activeInstance.comfyuiPath)}</span>
           </div>
-          <div className={status.running ? "top-state running" : "top-state"}>
+          <div className={effectivePhase === "running" ? "top-state running" : effectivePhase === "failed" ? "top-state failed" : "top-state"}>
             <span>{status.running ? "运行中" : "未启动"}</span>
             <strong>{status.url || `:${activeInstance.port || "8188"}`}</strong>
           </div>
@@ -708,6 +806,37 @@ export function App() {
               <MiniStat label="模式变化" value={`+${modePreview.enable.length} / -${modePreview.disable.length}`} />
               <MiniStat label="插件健康" value={`${issueCount} 个问题`} tone={issueCount ? "warn" : "ok"} />
             </div>
+
+            <section className={`preflight-panel ${phaseTone || ""}`}>
+              <div className="preflight-head">
+                <div>
+                  <p className="eyebrow">Launch diagnostics</p>
+                  <h2>启动诊断</h2>
+                </div>
+                <div className="preflight-summary">
+                  <span>{phaseLabels[effectivePhase]}</span>
+                  <strong>{failedChecks.length ? `${failedChecks.length} 项阻塞` : warningChecks.length ? `${warningChecks.length} 项提醒` : lastPreflight ? "检查通过" : "等待检查"}</strong>
+                </div>
+              </div>
+              <div className="preflight-grid">
+                {diagnosticChecks.length ? diagnosticChecks.map((check) => (
+                  <div className={`preflight-check ${check.status}`} key={check.id}>
+                    <Check size={14} />
+                    <span>{check.label}</span>
+                    <strong title={check.detail}>{check.detail}</strong>
+                    {check.action === "release-port" ? <button className="link-btn" onClick={releaseBlockedPort}>释放端口</button> : null}
+                    {check.action === "open-settings" ? <button className="link-btn" onClick={() => switchView("settings")}>去设置</button> : null}
+                  </div>
+                )) : <div className="empty-state compact-empty">点击启动后会先检查 ComfyUI 路径、Python、main.py、端口和模式应用条件。</div>}
+              </div>
+              {(lastLaunchError || latestErrorLine) ? (
+                <div className="launch-error">
+                  <AlertTriangle size={15} />
+                  <span title={lastLaunchError || latestErrorLine}>{lastLaunchError || latestErrorLine}</span>
+                  <button className="link-btn" onClick={() => switchView("logs")}>查看日志</button>
+                </div>
+              ) : null}
+            </section>
 
             <div className="console-panels">
               <Panel title="启动参数" eyebrow="Launch settings" action={<button className="ghost" onClick={() => switchView("logs")}><SquareTerminal size={15} />日志控制台</button>}>
