@@ -1,9 +1,11 @@
 Unicode true
 !define APP_NAME "ComfyUI Launcher Next"
+!ifndef APP_VERSION
 !define APP_VERSION "0.1.0"
+!endif
 !define APP_EXE "ComfyUI Launcher Next.exe"
 !define APP_DIR "..\release\ComfyUI Launcher Next-win32-x64"
-!define OUT_FILE "..\release\ComfyUI Launcher Next Setup 0.1.0.exe"
+!define OUT_FILE "..\release\ComfyUI Launcher Next Setup ${APP_VERSION}.exe"
 
 Name "${APP_NAME}"
 OutFile "${OUT_FILE}"
