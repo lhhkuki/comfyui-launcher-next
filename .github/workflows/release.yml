@@ -27,19 +27,6 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Ensure Electron runtime
-        shell: powershell
-        run: |
-          Remove-Item Env:ELECTRON_SKIP_BINARY_DOWNLOAD -ErrorAction SilentlyContinue
-          Remove-Item Env:npm_config_electron_skip_binary_download -ErrorAction SilentlyContinue
-          npm rebuild electron
-          if (!(Test-Path "node_modules\electron\dist\electron.exe")) {
-            npm install electron@33.4.11 --save-dev --foreground-scripts
-          }
-          if (!(Test-Path "node_modules\electron\dist\electron.exe")) {
-            throw "Electron runtime was not installed."
-          }
-
       - name: Install NSIS
         shell: powershell
         run: choco install nsis -y --no-progress
