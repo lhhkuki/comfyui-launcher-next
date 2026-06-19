@@ -464,33 +464,12 @@ export function App() {
     setCoreInfo(await window.launcher.comfy.coreVersion(activeInstance));
   }
 
-  async function runPreflight() {
-    return guarded("启动检查", () => window.launcher.comfy.preflight(activeInstance));
-  }
-
   async function startWithMode() {
     return startComfyManaged();
-    const checked = await runPreflight();
-    if (!checked.ready) {
-      setMessage("启动条件未通过，请先处理路径、Python 或端口占用问题。");
-      switchView("console");
-      return;
-    }
-    if (!status.running) {
-      const applied = await guarded("应用模式", () => window.launcher.modes.apply(activeInstance, activeMode));
-      if (applied) setPlugins(applied as PluginInfo[]);
-    } else if (modePreview.enable.length || modePreview.disable.length) {
-      setMessage("ComfyUI 已在运行，已跳过插件移动。需要切换插件模式时请先停止服务。");
-    }
-    const synced = { ...config, instances: config.instances.map((item) => (item.id === activeInstance.id ? activeInstance : item)) };
-    await save(synced);
-    setStatus((await guarded("启动 ComfyUI", () => window.launcher.comfy.start(activeInstance))) as RuntimeStatus);
-    switchView("logs");
   }
 
   async function stopComfy() {
     return stopComfyManaged();
-    setStatus((await guarded("停止 ComfyUI", window.launcher.comfy.stop)) as RuntimeStatus);
   }
 
   async function runPreflightManaged() {
@@ -557,10 +536,6 @@ export function App() {
 
   async function restartComfy() {
     return restartComfyManaged();
-    if (status.running) {
-      await stopComfy();
-    }
-    await startWithMode();
   }
 
   async function interruptGeneration() {
@@ -662,10 +637,24 @@ export function App() {
     patchInstance({ pathReferences: activeInstance.pathReferences.filter((item) => item.id !== id) });
   }
 
+  function pluginNameFromUrl(url: string) {
+    return url.trim().split(/[\\/]/).filter(Boolean).pop()?.replace(/\.git$/i, "") || "";
+  }
+
   async function installPlugin() {
     if (!repoUrl.trim()) return;
-    setPlugins((await guarded("安装插件", () => window.launcher.plugins.installFromGit(activeInstance, repoUrl.trim()))) as PluginInfo[]);
+    const installUrl = repoUrl.trim();
+    const expectedName = pluginNameFromUrl(installUrl).toLowerCase();
+    const rows = (await guarded("安装插件", () => window.launcher.plugins.installFromGit(activeInstance, installUrl))) as PluginInfo[];
+    setPlugins(rows);
     setRepoUrl("");
+    const installed = rows.find((plugin) => plugin.name.toLowerCase() === expectedName) ||
+      rows.find((plugin) => plugin.path.toLowerCase().endsWith(`\\${expectedName}`));
+    if (installed?.hasRequirements && window.confirm(`插件「${installed.name}」包含 requirements.txt，是否现在用当前 Python 环境安装依赖？`)) {
+      const text = await guarded("安装插件依赖", () => window.launcher.plugins.installRequirements(activeInstance, installed.path));
+      setLogs(String(text).split("\n"));
+      switchView("logs");
+    }
   }
 
   async function analyzeWorkflow() {

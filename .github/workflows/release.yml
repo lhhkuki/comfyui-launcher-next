@@ -1,0 +1,57 @@
+name: Release Windows Build
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    name: Build Windows installer
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install NSIS
+        shell: powershell
+        run: choco install nsis -y --no-progress
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build Windows packages
+        run: npm run dist:win
+
+      - name: Publish release assets
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $package = Get-Content package.json -Raw | ConvertFrom-Json
+          $version = $package.version
+          $tag = if ("${{ github.ref_type }}" -eq "tag") { "${{ github.ref_name }}" } else { "v$version" }
+          $title = "ComfyUI Launcher Next $tag"
+          $installer = "release\ComfyUI Launcher Next Setup $version.exe"
+          $portable = "release\ComfyUI Launcher Next $version Portable.zip"
+
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag --target "${{ github.sha }}" --title $title --notes "Automated Windows build for $tag."
+          }
+
+          gh release upload $tag $installer $portable --clobber

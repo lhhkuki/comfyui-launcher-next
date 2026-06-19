@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, dialog, ipcMain, shell, type IpcMainEvent } from "electron";
+import { app, BrowserWindow, Menu, Tray, dialog, ipcMain, shell, type IpcMainEvent } from "electron";
 import { spawn, ChildProcessWithoutNullStreams } from "node:child_process";
 import fs from "node:fs/promises";
 import fssync from "node:fs";
@@ -28,10 +28,12 @@ import {
 } from "./types";
 
 let mainWindow: BrowserWindow | null = null;
+let tray: Tray | null = null;
 let comfyProcess: ChildProcessWithoutNullStreams | null = null;
 let logBuffer: string[] = [];
 let currentUrl: string | null = null;
 let externalComfyPid: number | null = null;
+let isQuitting = false;
 
 const userData = () => app.getPath("userData");
 const dataPath = () => path.join(userData(), "launcher-next.config.json");
@@ -44,6 +46,34 @@ function id(prefix: string) {
 
 function normalizeSlashes(value = "") {
   return value.replace(/\//g, path.sep);
+}
+
+function activeInstanceFromDisk(): LauncherInstance | null {
+  try {
+    const raw = fssync.readFileSync(dataPath(), "utf8");
+    const config = JSON.parse(raw) as LauncherConfig;
+    return config.instances.find((instance) => instance.id === config.currentInstanceId) || config.instances[0] || null;
+  } catch {
+    return null;
+  }
+}
+
+function shouldMinimizeToTray() {
+  return Boolean(activeInstanceFromDisk()?.minimizeToTray);
+}
+
+function showMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.setSkipTaskbar(false);
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+}
+
+function hideMainWindowToTray() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.hide();
+  mainWindow.setSkipTaskbar(true);
 }
 
 async function exists(target: string) {
@@ -981,6 +1011,35 @@ async function createWindow() {
   } else {
     await mainWindow.loadFile(path.join(__dirname, "../dist/index.html"));
   }
+  mainWindow.on("minimize" as never, (event: Electron.Event) => {
+    if (!shouldMinimizeToTray()) return;
+    event.preventDefault();
+    hideMainWindowToTray();
+  });
+  mainWindow.on("close", (event) => {
+    if (isQuitting || !shouldMinimizeToTray()) return;
+    event.preventDefault();
+    hideMainWindowToTray();
+  });
+  createTray(iconPath);
+}
+
+function createTray(iconPath: string) {
+  if (tray) return;
+  tray = new Tray(iconPath);
+  tray.setToolTip("Comfy Station Launcher Next");
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: "显示窗口", click: showMainWindow },
+    { type: "separator" },
+    {
+      label: "退出",
+      click: () => {
+        isQuitting = true;
+        app.quit();
+      }
+    }
+  ]));
+  tray.on("click", showMainWindow);
 }
 
 app.whenReady().then(async () => {
@@ -989,6 +1048,11 @@ app.whenReady().then(async () => {
   await ensureDirs();
   await loadConfig();
   await createWindow();
+});
+
+app.on("before-quit", () => {
+  isQuitting = true;
+  if (comfyProcess) comfyProcess.kill();
 });
 
 app.on("window-all-closed", () => {
@@ -1026,6 +1090,10 @@ public class NativeWindow {
 ipcMain.on("window:minimize", (event) => {
   const win = windowFromEvent(event);
   if (!win) return;
+  if (shouldMinimizeToTray()) {
+    hideMainWindowToTray();
+    return;
+  }
   win.setSkipTaskbar(false);
   if (win.isFullScreen()) win.setFullScreen(false);
   if (process.platform === "win32") {
