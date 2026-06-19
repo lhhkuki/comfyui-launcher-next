@@ -16,8 +16,12 @@ if (!(Test-Path $electronDist)) {
 Remove-Item -LiteralPath $release -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Path $appDir | Out-Null
 
-Copy-Item -Path (Join-Path $electronDist "*") -Destination $appDir -Recurse -Force
-Rename-Item -LiteralPath (Join-Path $appDir "electron.exe") -NewName "$appName.exe"
+Get-ChildItem -LiteralPath $electronDist -Force | Copy-Item -Destination $appDir -Recurse -Force
+$electronExe = Join-Path $appDir "electron.exe"
+if (!(Test-Path $electronExe)) {
+  throw "electron.exe was not copied from $electronDist"
+}
+Rename-Item -LiteralPath $electronExe -NewName "$appName.exe"
 
 $app = Join-Path $appDir "resources\app"
 New-Item -ItemType Directory -Path $app | Out-Null
