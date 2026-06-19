@@ -63,6 +63,10 @@ Compress-Archive -Path (Join-Path $appDir "*") -DestinationPath $zipPath -Compre
 $makensisCommand = Get-Command makensis.exe -ErrorAction SilentlyContinue
 $makensis = if ($makensisCommand) { $makensisCommand.Source } else { $null }
 if (!$makensis) {
+  $chocoNsis = Join-Path ${env:ProgramFiles(x86)} "NSIS\makensis.exe"
+  if (Test-Path $chocoNsis) { $makensis = $chocoNsis }
+}
+if (!$makensis) {
   $cached = Join-Path $env:LOCALAPPDATA "electron-builder\Cache\nsis\nsis-3.0.4.1-nsis-3.0.4.1\Bin\makensis.exe"
   if (Test-Path $cached) { $makensis = $cached }
 }
@@ -80,6 +84,11 @@ if ($makensis) {
   }
 } else {
   Write-Warning "NSIS makensis.exe not found. Portable ZIP was created, installer was skipped."
+}
+
+$installerPath = Join-Path $release "$appName Setup $version.exe"
+if ($env:GITHUB_ACTIONS -eq "true" -and !(Test-Path $installerPath)) {
+  throw "Installer was not created in GitHub Actions: $installerPath"
 }
 
 Get-ChildItem $release | Select-Object Name, Length, LastWriteTime
