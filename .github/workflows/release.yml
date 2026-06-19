@@ -48,10 +48,17 @@ jobs:
           $title = "ComfyUI Launcher Next $tag"
           $installer = "release\ComfyUI Launcher Next Setup $version.exe"
           $portable = "release\ComfyUI Launcher Next $version Portable.zip"
+          $assets = @($installer, $portable)
+
+          foreach ($asset in $assets) {
+            if (!(Test-Path -LiteralPath $asset)) {
+              throw "Release asset not found: $asset"
+            }
+          }
 
           gh release view $tag *> $null
           if ($LASTEXITCODE -ne 0) {
             gh release create $tag --target "${{ github.sha }}" --title $title --notes "Automated Windows build for $tag."
           }
 
-          gh release upload $tag $installer $portable --clobber
+          gh release upload $tag @assets --clobber
