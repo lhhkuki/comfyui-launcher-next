@@ -17,6 +17,11 @@ $sourceElectronExe = Join-Path $electronDist "electron.exe"
 if (!(Test-Path $sourceElectronExe)) {
   $electronInstall = Join-Path $root "node_modules\electron\install.js"
   if (Test-Path $electronInstall) {
+    Remove-Item -LiteralPath $electronDist -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath (Join-Path $root "node_modules\electron\path.txt") -Force -ErrorAction SilentlyContinue
+    $env:npm_config_platform = "win32"
+    $env:npm_config_arch = "x64"
+    $env:force_no_cache = "true"
     & node $electronInstall
   }
 }
