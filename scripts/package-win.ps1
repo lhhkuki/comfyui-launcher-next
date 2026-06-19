@@ -27,6 +27,18 @@ if (!(Test-Path $sourceElectronExe)) {
 }
 
 if (!(Test-Path $sourceElectronExe)) {
+  $electronPackage = Get-Content (Join-Path $root "node_modules\electron\package.json") -Raw | ConvertFrom-Json
+  $electronVersion = $electronPackage.version
+  $electronZip = Join-Path $env:TEMP "electron-v$electronVersion-win32-x64.zip"
+  $electronUrl = "https://github.com/electron/electron/releases/download/v$electronVersion/electron-v$electronVersion-win32-x64.zip"
+  Remove-Item -LiteralPath $electronDist -Recurse -Force -ErrorAction SilentlyContinue
+  New-Item -ItemType Directory -Path $electronDist | Out-Null
+  Invoke-WebRequest -Uri $electronUrl -OutFile $electronZip
+  Expand-Archive -LiteralPath $electronZip -DestinationPath $electronDist -Force
+  Remove-Item -LiteralPath $electronZip -Force -ErrorAction SilentlyContinue
+}
+
+if (!(Test-Path $sourceElectronExe)) {
   throw "electron.exe was not found in $electronDist"
 }
 
