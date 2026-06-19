@@ -13,6 +13,18 @@ if (!(Test-Path $electronDist)) {
   throw "Electron runtime not found. Run npm install first."
 }
 
+$sourceElectronExe = Join-Path $electronDist "electron.exe"
+if (!(Test-Path $sourceElectronExe)) {
+  $electronInstall = Join-Path $root "node_modules\electron\install.js"
+  if (Test-Path $electronInstall) {
+    & node $electronInstall
+  }
+}
+
+if (!(Test-Path $sourceElectronExe)) {
+  throw "electron.exe was not found in $electronDist"
+}
+
 Remove-Item -LiteralPath $release -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Path $appDir | Out-Null
 
