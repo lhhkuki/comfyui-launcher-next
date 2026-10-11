@@ -1,5 +1,6 @@
 import type {
   BrowserOption,
+  AppUpdateInfo,
   CoreVersionInfo,
   EnvironmentPackage,
   LauncherConfig,
@@ -21,6 +22,13 @@ declare global {
       config: {
         load(): Promise<LauncherConfig>;
         save(config: LauncherConfig): Promise<LauncherConfig>;
+        export(): Promise<string>;
+        import(): Promise<LauncherConfig | null>;
+        reset(): Promise<LauncherConfig>;
+      };
+      app: {
+        checkUpdate(): Promise<AppUpdateInfo>;
+        openExternal(url: string): Promise<void>;
       };
       window: {
         minimize(): void;
@@ -48,6 +56,7 @@ declare global {
       filesystem: {
         openPath(target: string): Promise<string>;
         listDir(target: string): Promise<unknown[]>;
+        exists(target: string): Promise<boolean>;
         selectFolder(): Promise<string>;
         selectFile(): Promise<string>;
       };
@@ -106,6 +115,9 @@ declare global {
         clear(): Promise<string[]>;
         export(): Promise<string>;
         onLine(callback: (line: string) => void): () => void;
+      };
+      notifications: {
+        show(title: string, body: string): Promise<boolean>;
       };
     };
   }

@@ -1,6 +1,6 @@
 {
   "name": "comfyui-launcher-next",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "private": false,
   "description": "A clean Windows desktop launcher for local ComfyUI installations.",
   "main": "dist-electron/main.js",
@@ -21,7 +21,13 @@
     "build": "tsc -p electron/tsconfig.json && vite build",
     "dist:win": "npm run build && powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-win.ps1",
     "start": "npm run build && electron .",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "npm run typecheck && npm run test:app-model && npm run test:domain && npm run test:comfy-api && npm run test:refactor && npm run test:electron-smoke",
+    "test:refactor": "node scripts/refactor-regression.mjs",
+    "test:app-model": "node scripts/app-model-regression.mjs",
+    "test:domain": "npm run build && node scripts/domain-regression.mjs",
+    "test:comfy-api": "npm run build && node scripts/comfy-api-regression.mjs",
+    "test:electron-smoke": "npm run build && node scripts/electron-smoke.mjs"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^4.7.0",

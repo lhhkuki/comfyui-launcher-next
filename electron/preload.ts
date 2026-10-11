@@ -4,7 +4,14 @@ import type { LauncherConfig, LauncherInstance } from "./types";
 const api = {
   config: {
     load: () => ipcRenderer.invoke("config:load"),
-    save: (config: LauncherConfig) => ipcRenderer.invoke("config:save", config)
+    save: (config: LauncherConfig) => ipcRenderer.invoke("config:save", config),
+    export: () => ipcRenderer.invoke("config:export"),
+    import: () => ipcRenderer.invoke("config:import"),
+    reset: () => ipcRenderer.invoke("config:reset")
+  },
+  app: {
+    checkUpdate: () => ipcRenderer.invoke("app:checkUpdate"),
+    openExternal: (url: string) => ipcRenderer.invoke("app:openExternal", url)
   },
   window: {
     minimize: () => ipcRenderer.send("window:minimize"),
@@ -36,6 +43,7 @@ const api = {
   filesystem: {
     openPath: (target: string) => ipcRenderer.invoke("filesystem:openPath", target),
     listDir: (target: string) => ipcRenderer.invoke("filesystem:listDir", target),
+    exists: (target: string) => ipcRenderer.invoke("filesystem:exists", target),
     selectFolder: () => ipcRenderer.invoke("filesystem:selectFolder"),
     selectFile: () => ipcRenderer.invoke("filesystem:selectFile")
   },
@@ -101,6 +109,9 @@ const api = {
       ipcRenderer.on("logs:line", listener);
       return () => ipcRenderer.removeListener("logs:line", listener);
     }
+  },
+  notifications: {
+    show: (title: string, body: string) => ipcRenderer.invoke("notifications:show", title, body)
   }
 };
 

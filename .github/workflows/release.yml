@@ -31,8 +31,8 @@ jobs:
         shell: powershell
         run: choco install nsis -y --no-progress
 
-      - name: Typecheck
-        run: npm run typecheck
+      - name: Run full test suite
+        run: npm run test
 
       - name: Build Windows packages
         run: npm run dist:win
@@ -48,7 +48,7 @@ jobs:
           $title = "ComfyUI Launcher Next $tag"
           $installer = "release\ComfyUI Launcher Next Setup $version.exe"
           $portable = "release\ComfyUI Launcher Next $version Portable.zip"
-          $assets = @($installer, $portable)
+          $assets = @($installer, $portable, "release\SHA256SUMS.txt")
 
           foreach ($asset in $assets) {
             if (!(Test-Path -LiteralPath $asset)) {
@@ -58,7 +58,14 @@ jobs:
 
           gh release view $tag *> $null
           if ($LASTEXITCODE -ne 0) {
-            gh release create $tag --target "${{ github.sha }}" --title $title --notes "Automated Windows build for $tag."
+            $notes = "docs\RELEASE-$version.md"
+            if (Test-Path -LiteralPath $notes) {
+              gh release create $tag --target "${{ github.sha }}" --title $title --notes-file $notes
+            } else {
+              gh release create $tag --target "${{ github.sha }}" --title $title --notes "Automated Windows build for $tag."
+            }
+            if ($LASTEXITCODE -ne 0) { throw "Failed to create release $tag" }
           }
 
           gh release upload $tag @assets --clobber
+          if ($LASTEXITCODE -ne 0) { throw "Failed to upload release assets" }

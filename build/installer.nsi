@@ -4,11 +4,15 @@ Unicode true
 !define APP_VERSION "0.1.0"
 !endif
 !define APP_EXE "ComfyUI Launcher Next.exe"
+!ifndef APP_DIR
 !define APP_DIR "..\release\ComfyUI Launcher Next-win32-x64"
+!endif
 !define OUT_FILE "..\release\ComfyUI Launcher Next Setup ${APP_VERSION}.exe"
 
 Name "${APP_NAME}"
 OutFile "${OUT_FILE}"
+Icon "..\electron\app-icon.ico"
+UninstallIcon "..\electron\app-icon.ico"
 InstallDir "$LOCALAPPDATA\Programs\${APP_NAME}"
 RequestExecutionLevel user
 

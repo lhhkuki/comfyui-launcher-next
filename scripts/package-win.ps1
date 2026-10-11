@@ -1,3 +1,5 @@
+param([switch]$SkipPortableDirectory)
+
 $ErrorActionPreference = "Stop"
 
 $root = Split-Path -Parent $PSScriptRoot
@@ -5,9 +7,53 @@ $release = Join-Path $root "release"
 $appName = "ComfyUI Launcher Next"
 $package = Get-Content (Join-Path $root "package.json") -Raw | ConvertFrom-Json
 $version = $package.version
-$appDir = Join-Path $release "$appName-win32-x64"
+$stagingRoot = Join-Path $release ".staging-$PID"
+$appDir = Join-Path $stagingRoot "$appName-win32-x64"
+$portableDir = Join-Path $release "$appName $version Portable"
+$legacyAppDir = Join-Path $release "$appName-win32-x64"
 $zipPath = Join-Path $release "$appName $version Portable.zip"
 $electronDist = Join-Path $root "node_modules\electron\dist"
+
+function Remove-PathWithRetry {
+  param(
+    [Parameter(Mandatory = $true)][string]$Path,
+    [int]$Attempts = 12
+  )
+
+  $resolvedTarget = [System.IO.Path]::GetFullPath($Path)
+  $allowedRoot = [System.IO.Path]::GetFullPath($release).TrimEnd('\') + '\'
+  if (!$resolvedTarget.StartsWith($allowedRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "Refusing to remove a path outside release: $resolvedTarget"
+  }
+
+  if (!(Test-Path $Path)) {
+    return
+  }
+
+  for ($index = 1; $index -le $Attempts; $index++) {
+    try {
+      Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction Stop
+      return
+    } catch {
+      if ($index -eq $Attempts) {
+        throw "Failed to remove $Path. Close any running $appName windows and retry. $($_.Exception.Message)"
+      }
+      Start-Sleep -Milliseconds 500
+    }
+  }
+}
+
+function Assert-PackageComplete([string]$Directory) {
+  foreach ($relative in @("$appName.exe", "resources\app\package.json", "resources\app\dist\index.html", "resources\app\dist-electron\main.js", "resources\app\dist-electron\preload.js", "resources\app\dist-electron\configWriter.js", "resources\app\electron\app-icon.ico")) {
+    $file = Join-Path $Directory $relative
+    if (!(Test-Path -LiteralPath $file -PathType Leaf) -or (Get-Item -LiteralPath $file).Length -eq 0) {
+      throw "Incomplete package: $file"
+    }
+  }
+  if (!(Get-ChildItem -LiteralPath (Join-Path $Directory "resources\app\dist\assets") -Filter *.js)) {
+    throw "Package contains no frontend JavaScript assets: $Directory"
+  }
+}
 
 if (!(Test-Path $electronDist)) {
   throw "Electron runtime not found. Run npm install first."
@@ -42,7 +88,10 @@ if (!(Test-Path $sourceElectronExe)) {
   throw "electron.exe was not found in $electronDist"
 }
 
-Remove-Item -LiteralPath $release -Recurse -Force -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Path $release -Force | Out-Null
+Remove-PathWithRetry -Path $stagingRoot
+if (!$SkipPortableDirectory) { Remove-PathWithRetry -Path $portableDir }
+Remove-Item -LiteralPath $zipPath -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Path $appDir | Out-Null
 
 Get-ChildItem -LiteralPath $electronDist -Force | Copy-Item -Destination $appDir -Recurse -Force
@@ -56,8 +105,17 @@ $app = Join-Path $appDir "resources\app"
 New-Item -ItemType Directory -Path $app | Out-Null
 Copy-Item -Path (Join-Path $root "dist") -Destination $app -Recurse -Force
 Copy-Item -Path (Join-Path $root "dist-electron") -Destination $app -Recurse -Force
+Copy-Item -Path (Join-Path $root "electron") -Destination $app -Recurse -Force
 Copy-Item -Path (Join-Path $root "package.json"), (Join-Path $root "README.md"), (Join-Path $root "LICENSE") -Destination $app -Force
+Assert-PackageComplete $appDir
 
+if (!$SkipPortableDirectory) {
+  New-Item -ItemType Directory -Path $portableDir -Force | Out-Null
+  Copy-Item -Path (Join-Path $appDir "*") -Destination $portableDir -Recurse -Force
+  Assert-PackageComplete $portableDir
+} else {
+  Write-Host "Keeping the existing portable directory unchanged; packaging from staging."
+}
 Compress-Archive -Path (Join-Path $appDir "*") -DestinationPath $zipPath -CompressionLevel Optimal
 
 $makensisCommand = Get-Command makensis.exe -ErrorAction SilentlyContinue
@@ -78,7 +136,10 @@ if (!$makensis) {
 if ($makensis) {
   Push-Location $root
   try {
-    & $makensis "/DAPP_VERSION=$version" "build\installer.nsi"
+    & $makensis "/DAPP_VERSION=$version" "/DAPP_DIR=$appDir" "build\installer.nsi"
+    if ($LASTEXITCODE -ne 0) {
+      throw "NSIS makensis.exe failed with exit code $LASTEXITCODE"
+    }
   } finally {
     Pop-Location
   }
@@ -87,8 +148,18 @@ if ($makensis) {
 }
 
 $installerPath = Join-Path $release "$appName Setup $version.exe"
+$checksumAssets = @($zipPath)
+if (Test-Path -LiteralPath $installerPath) { $checksumAssets += $installerPath }
+$checksumLines = foreach ($asset in $checksumAssets) {
+  $hash = (Get-FileHash -LiteralPath $asset -Algorithm SHA256).Hash.ToLowerInvariant()
+  "$hash  $([System.IO.Path]::GetFileName($asset))"
+}
+$checksumLines | Set-Content -LiteralPath (Join-Path $release "SHA256SUMS.txt") -Encoding ascii
 if ($env:GITHUB_ACTIONS -eq "true" -and !(Test-Path $installerPath)) {
   throw "Installer was not created in GitHub Actions: $installerPath"
 }
 
 Get-ChildItem $release | Select-Object Name, Length, LastWriteTime
+
+Remove-PathWithRetry -Path $legacyAppDir
+Remove-PathWithRetry -Path $stagingRoot

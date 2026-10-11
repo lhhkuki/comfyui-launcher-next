@@ -154,6 +154,8 @@ export interface WorkflowAnalysisResult {
   missingNodeTypes: string[];
   matchedPlugins: string[];
   suggestedPlugins: string[];
+  unverifiedNodeTypes: string[];
+  modelCandidates: { name: string; found: boolean }[];
 }
 
 export interface EnvironmentPackage {
@@ -174,4 +176,13 @@ export interface CoreVersionInfo {
   tag: string;
   remote: string;
   status: string;
+}
+
+export interface AppUpdateInfo {
+  currentVersion: string;
+  latestVersion: string;
+  updateAvailable: boolean;
+  releaseUrl: string;
+  releaseName: string;
+  publishedAt: string;
 }

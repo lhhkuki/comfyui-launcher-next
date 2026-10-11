@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, Tray, dialog, ipcMain, shell, type IpcMainEvent } from "electron";
+import { app, BrowserWindow, Menu, Tray, dialog, ipcMain, shell, Notification, nativeImage, type IpcMainEvent } from "electron";
 import { spawn, ChildProcessWithoutNullStreams } from "node:child_process";
 import fs from "node:fs/promises";
 import fssync from "node:fs";
@@ -7,6 +7,7 @@ import crypto from "node:crypto";
 import { pathToFileURL } from "node:url";
 import {
   BrowserOption,
+  AppUpdateInfo,
   CoreVersionInfo,
   DirEntry,
   EnvironmentPackage,
@@ -26,6 +27,9 @@ import {
   SystemStats,
   WorkflowAnalysisResult
 } from "./types";
+import * as domain from "./domain";
+import * as comfyApi from "./comfyApi";
+import { createConfigWriter } from "./configWriter";
 
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
@@ -34,9 +38,15 @@ let logBuffer: string[] = [];
 let currentUrl: string | null = null;
 let externalComfyPid: number | null = null;
 let isQuitting = false;
+const appIconFallbackDataUrl = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAADGElEQVR4nE2TS2hdVRSG/7X2Po977r1Jrkn12sZaIh1IhIai+Bo4qRZBHAnFiaKCtOCgOBDtpDqQoOigAakKOnOiE0Er2IHQiVUhFK4vqmkxlRpj0jTpfZznXkv2uSouOHuwz/o2//73+gknlfEaydzRtbtajc5hcUWrLEsSYTCjLhGAWRAEgTLbYda/cfaXD7o9z5JvmH9h8zkOW0t5xYkokISERkQY/wX8Xloo0lxBBERWUlTD498vTb9Pdx6/Nm9getupYVfl1VRCUADDTFG58QGB9RCxNaCdkTgyse00ReHcgrXGPFYi4crtVN2OtVEUYpABU5GCDcOLyEtg94zbDgOqrq7LzOZOVpU8ZUPuP26ZNAFBk5j52OGouG9O/uinogETjEofAI8gEz9v2WuF2PjDM/1mp22i0l+MNLFComyUClG9bVrdjz9cOkEuWA7Sis/fHT3DTss3z/Opty8O9i8e3ffGZ0lmf9pI9rdbCnKili0gBGROkRZiD85Mrp+9p/XI1SK7v3Dl5Vyw69Unw5MPrARftIz0HeFW3zthAH8/rl1iwBh48+T3G0PuBPbbQ2i+tc9Ev47UBSOV4W/X0yovVJlB7GFPMmD9QjxW0WlZ9+cmP3z53dXVTWfKK3fQQ7fHJp7tjb5aKcr59lPhLapZQYZqxhts6wNM/dGnFwr37L03H9qzxxnnQE/PTUyvro3Wtx4sX1qI2PQu7VxZ2ZC9ccMD/yhgBhwBSQT5eDlPPvq62G0NXKfJeu6EnXznGw0++a7KA6MsytMT7UYXmjsykeHKKzAgYlGwYrLFJm20uwdmDZaOxE4V5etHburs7abB6XMlJhNCkecQ/4Ks6lnLJCkMkZ8FTwSU68U14In3MnJOI2NI01w0tkBZer/Ij2oNM9GIC3VnAozUxJF1qpUypFTIxkB0K1X5ayA6qiDgOlPie0wU2pAyVOo+r+NycHHjeY6apwrH8Xj6AfKp+V+p+oSMKzSaaTF4cfnlXafp3zgvLK4fiKLmo86VLaCCau3zf1UL95YFwSBNt7/svTJ7wbN/A1aBiPfimrfmAAAAAElFTkSuQmCC";
+
+if (process.env.COMFY_STATION_USER_DATA) {
+  app.setPath("userData", process.env.COMFY_STATION_USER_DATA);
+}
 
 const userData = () => app.getPath("userData");
 const dataPath = () => path.join(userData(), "launcher-next.config.json");
+let configWriter: ReturnType<typeof createConfigWriter> | undefined;
 const logsRoot = () => path.join(userData(), "logs");
 const backupsRoot = () => path.join(userData(), "backups");
 
@@ -93,7 +103,7 @@ async function ensureDirs() {
 function defaultInstance(): LauncherInstance {
   return {
     id: id("inst"),
-    name: "ComfyUI",
+    name: "ComfyUI 环境",
     comfyuiPath: "",
     pythonPath: "",
     port: "8188",
@@ -142,17 +152,21 @@ async function loadConfig(): Promise<LauncherConfig> {
     return initial;
   }
   const config = JSON.parse(await fs.readFile(dataPath(), "utf8")) as LauncherConfig;
+  const normalizeVram = (value: string) => value === "榛樿" || value === "??" || !value ? "默认" : value;
+  const cleanName = (value: string, fallback: string) => /榛|鏃|鎺|绛|鐜|妯|鎻|璺|濯|鍚|鏈|鍦|\?{2,}/.test(value || "") ? fallback : value || fallback;
   const migrated: LauncherConfig = {
     ...config,
     instances: config.instances.map((instance) => ({
       ...defaultInstance(),
       ...instance,
-      name: instance.name.replace(/^旧实例/i, "ComfyUI 环境"),
+      name: cleanName(instance.name, "ComfyUI 环境"),
+      vramMode: normalizeVram(instance.vramMode) as LauncherInstance["vramMode"],
       pathReferences: instance.pathReferences || [],
       advancedArgs: instance.advancedArgs || {}
     })),
     modes: config.modes.map((mode) => ({
       ...mode,
+      name: cleanName(mode.name, "默认模式"),
       enabledPlugins: mode.enabledPlugins || [],
       disabledPlugins: mode.disabledPlugins || [],
       applyStrategy: mode.applyStrategy || "disabled-list"
@@ -166,58 +180,92 @@ async function loadConfig(): Promise<LauncherConfig> {
 
 async function saveConfig(config: LauncherConfig) {
   await ensureDirs();
-  await fs.writeFile(dataPath(), JSON.stringify(config, null, 2), "utf8");
+  configWriter ||= createConfigWriter(dataPath());
+  await configWriter(config);
   return config;
 }
 
+async function exportConfig() {
+  await ensureDirs();
+  const targetName = `comfy-station-config-${new Date().toISOString().slice(0, 10)}.json`;
+  const result = mainWindow
+    ? await dialog.showSaveDialog(mainWindow, {
+        title: "导出配置",
+        defaultPath: targetName,
+        filters: [{ name: "JSON", extensions: ["json"] }]
+      })
+    : await dialog.showSaveDialog({
+        title: "导出配置",
+        defaultPath: targetName,
+        filters: [{ name: "JSON", extensions: ["json"] }]
+      });
+  if (result.canceled || !result.filePath) return "";
+  await fs.copyFile(dataPath(), result.filePath);
+  return result.filePath;
+}
+
+async function importConfig() {
+  const result = mainWindow
+    ? await dialog.showOpenDialog(mainWindow, {
+        title: "导入配置",
+        properties: ["openFile"],
+        filters: [{ name: "JSON", extensions: ["json"] }]
+      })
+    : await dialog.showOpenDialog({
+        title: "导入配置",
+        properties: ["openFile"],
+        filters: [{ name: "JSON", extensions: ["json"] }]
+      });
+  if (result.canceled || !result.filePaths[0]) return null;
+  const parsed = JSON.parse(await fs.readFile(result.filePaths[0], "utf8")) as LauncherConfig;
+  if (!Array.isArray(parsed.instances) || !Array.isArray(parsed.modes)) {
+    throw new Error("配置文件格式不正确");
+  }
+  return saveConfig(parsed);
+}
+
+async function resetConfig() {
+  const next = defaultConfig();
+  await saveConfig(next);
+  return next;
+}
+
+async function exportLogs() {
+  await ensureDirs();
+  const today = new Date().toISOString().slice(0, 10);
+  const defaultPath = `comfy-station-logs-${today}.log`;
+  const result = mainWindow
+    ? await dialog.showSaveDialog(mainWindow, {
+        title: "导出日志",
+        defaultPath,
+        filters: [{ name: "Log", extensions: ["log", "txt"] }]
+      })
+    : await dialog.showSaveDialog({
+        title: "导出日志",
+        defaultPath,
+        filters: [{ name: "Log", extensions: ["log", "txt"] }]
+      });
+  if (result.canceled || !result.filePath) return "";
+
+  let content = logBuffer.join("\n");
+  if (!content) {
+    const dailyLog = path.join(logsRoot(), `${today}.log`);
+    if (await exists(dailyLog)) content = await fs.readFile(dailyLog, "utf8");
+  }
+  await fs.writeFile(result.filePath, content ? `${content.trimEnd()}\n` : "", "utf8");
+  return result.filePath;
+}
+
 function buildArgs(instance: LauncherInstance) {
-  const args = ["main.py"];
-  const modelConfig = launcherExtraModelConfigPath(instance);
-  if (fssync.existsSync(modelConfig)) args.push("--extra-model-paths-config", modelConfig);
-  if (instance.port) args.push("--port", instance.port);
-  if (instance.gpu) args.push("--cuda-device", instance.gpu);
-  if (instance.disableXformers) args.push("--disable-xformers");
-  if (instance.disableMetadata) args.push("--disable-metadata");
-  if (instance.enableManager) args.push("--enable-manager");
-  if (instance.vramMode && instance.vramMode !== "默认") args.push(`--${instance.vramMode}`);
-  if (instance.extraArgs.trim()) args.push(...instance.extraArgs.trim().split(/\s+/));
-  return args;
+  return domain.buildArgs(instance);
 }
 
 function launcherExtraModelConfigPath(instance: LauncherInstance) {
-  return path.join(instance.comfyuiPath || ".", "launcher_next_extra_model_paths.yaml");
+  return domain.launcherExtraModelConfigPath(instance);
 }
 
 async function syncModelPathConfig(instance: LauncherInstance) {
-  const modelRefs = (instance.pathReferences || []).filter((ref) => ref.enabled && ref.kind === "models" && ref.path);
-  const target = launcherExtraModelConfigPath(instance);
-  if (!modelRefs.length) {
-    if (await exists(target)) await fs.rm(target, { force: true });
-    return "";
-  }
-  const modelKeys = [
-    "checkpoints",
-    "text_encoders",
-    "clip",
-    "clip_vision",
-    "configs",
-    "controlnet",
-    "diffusion_models",
-    "embeddings",
-    "loras",
-    "upscale_models",
-    "vae",
-    "audio_encoders",
-    "model_patches"
-  ];
-  const lines = ["# Generated by ComfyUI Launcher Next. Safe to delete."];
-  modelRefs.forEach((ref, index) => {
-    lines.push(`launcher_next_${index}:`);
-    lines.push(`  base_path: ${ref.path.replace(/\\/g, "/")}`);
-    for (const key of modelKeys) lines.push(`  ${key}: ${key}`);
-  });
-  await fs.writeFile(target, `${lines.join("\n")}\n`, "utf8");
-  return target;
+  return domain.syncModelPathConfig(instance);
 }
 
 async function appendLog(line: string) {
@@ -235,20 +283,57 @@ function runtimeStatus(): RuntimeStatus {
   };
 }
 
+function showNotification(title: string, body: string) {
+  if (!Notification.isSupported()) return false;
+  new Notification({ title, body }).show();
+  return true;
+}
+
+function compareVersions(a: string, b: string) {
+  const left = String(a || "").replace(/^v/i, "").split(".").map((part) => Number.parseInt(part, 10));
+  const right = String(b || "").replace(/^v/i, "").split(".").map((part) => Number.parseInt(part, 10));
+  if (left.some(Number.isNaN) || right.some(Number.isNaN)) return 0;
+  for (let index = 0; index < Math.max(left.length, right.length); index += 1) {
+    const diff = (left[index] || 0) - (right[index] || 0);
+    if (diff) return diff;
+  }
+  return 0;
+}
+
+async function checkAppUpdate(): Promise<AppUpdateInfo> {
+  const currentVersion = app.getVersion();
+  const response = await fetch("https://api.github.com/repos/lhhkuki/comfyui-launcher-next/releases/latest", {
+    headers: {
+      Accept: "application/vnd.github+json",
+      "User-Agent": `Comfy-Station/${currentVersion}`
+    }
+  });
+  if (!response.ok) throw new Error(`检查更新失败：${response.status} ${response.statusText}`);
+  const release: any = await response.json();
+  const latestVersion = String(release.tag_name || release.name || "").replace(/^v/i, "") || currentVersion;
+  const releaseUrl = String(release.html_url || "https://github.com/lhhkuki/comfyui-launcher-next/releases");
+  return {
+    currentVersion,
+    latestVersion,
+    updateAvailable: compareVersions(latestVersion, currentVersion) > 0,
+    releaseUrl,
+    releaseName: String(release.name || release.tag_name || latestVersion),
+    publishedAt: String(release.published_at || "")
+  };
+}
+
+async function openExternalSafe(url: string) {
+  const parsed = new URL(url);
+  if (!["https:", "http:"].includes(parsed.protocol)) throw new Error("只允许打开 http/https 链接");
+  await shell.openExternal(parsed.toString());
+}
+
 function instanceUrl(instance: LauncherInstance) {
-  return `http://127.0.0.1:${instance.port || "8188"}`;
+  return comfyApi.instanceUrl(instance);
 }
 
 async function fetchJson(url: string) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 1800);
-  try {
-    const response = await fetch(url, { signal: controller.signal });
-    if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
-    return await response.json();
-  } finally {
-    clearTimeout(timer);
-  }
+  return comfyApi.fetchJson(url);
 }
 
 async function portOwner(port: string) {
@@ -351,32 +436,11 @@ async function releasePort(port: string): Promise<PreflightResult> {
 }
 
 async function postComfy(instance: LauncherInstance, endpoint: string, body: Record<string, unknown>) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 2200);
-  try {
-    const response = await fetch(`${instanceUrl(instance)}${endpoint}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-      signal: controller.signal
-    });
-    if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
-    return "ok";
-  } finally {
-    clearTimeout(timer);
-  }
+  return comfyApi.postComfy(instance, endpoint, body);
 }
 
 async function queueStatus(instance: LauncherInstance): Promise<QueueStatus> {
-  try {
-    const json: any = await fetchJson(`${instanceUrl(instance)}/queue`);
-    return {
-      running: Array.isArray(json.queue_running) ? json.queue_running.length : 0,
-      pending: Array.isArray(json.queue_pending) ? json.queue_pending.length : 0
-    };
-  } catch {
-    return { running: 0, pending: 0 };
-  }
+  return comfyApi.queueStatus(instance);
 }
 
 async function interruptComfy(instance: LauncherInstance) {
@@ -404,24 +468,7 @@ async function clearComfyHistory(instance: LauncherInstance) {
 }
 
 async function systemStats(instance: LauncherInstance): Promise<SystemStats> {
-  try {
-    const json: any = await fetchJson(`${instanceUrl(instance)}/system_stats`);
-    return {
-      os: json.system?.os || "",
-      python: json.system?.python_version || "",
-      pytorch: json.system?.pytorch_version || "",
-      devices: (json.devices || []).map((device: any) => ({
-        name: device.name || "Unknown device",
-        type: device.type || "",
-        vramTotal: Number(device.vram_total || 0),
-        vramFree: Number(device.vram_free || 0),
-        torchVramTotal: Number(device.torch_vram_total || 0),
-        torchVramFree: Number(device.torch_vram_free || 0)
-      }))
-    };
-  } catch {
-    return { os: "", python: "", pytorch: "", devices: [] };
-  }
+  return comfyApi.systemStats(instance);
 }
 
 async function startComfy(instance: LauncherInstance) {
@@ -461,8 +508,10 @@ async function startComfy(instance: LauncherInstance) {
     appendLog(`ComfyUI 已退出，代码 ${code ?? "unknown"}`);
     comfyProcess = null;
     externalComfyPid = null;
+    updateTrayMenu();
     mainWindow?.webContents.send("comfy:status", runtimeStatus());
   });
+  updateTrayMenu();
   return runtimeStatus();
 }
 
@@ -499,25 +548,30 @@ async function openComfyWeb(browserChoice?: string, browserPath?: string) {
 
 async function coreVersionInfo(instance: LauncherInstance): Promise<CoreVersionInfo> {
   const cwd = instance.comfyuiPath;
+  const inspect = (args: string[]) => runChecked("git", args, cwd).catch(() => "");
   return {
-    branch: await run("git", ["rev-parse", "--abbrev-ref", "HEAD"], cwd),
-    commit: await run("git", ["rev-parse", "--short", "HEAD"], cwd),
-    tag: await run("git", ["describe", "--tags", "--exact-match"], cwd),
-    remote: await run("git", ["remote", "get-url", "origin"], cwd),
-    status: await run("git", ["status", "--short"], cwd)
+    branch: await inspect(["rev-parse", "--abbrev-ref", "HEAD"]),
+    commit: await inspect(["rev-parse", "--short", "HEAD"]),
+    tag: await inspect(["describe", "--tags", "--exact-match"]),
+    remote: await inspect(["remote", "get-url", "origin"]),
+    status: await inspect(["status", "--short"])
   };
 }
 
 async function updateCore(instance: LauncherInstance) {
   const cwd = instance.comfyuiPath;
   if (!(await exists(path.join(cwd, ".git")))) throw new Error("当前 ComfyUI 目录不是 Git 仓库");
+  const status = await run("git", ["status", "--short"], cwd);
+  if (status.trim()) {
+    throw new Error(`ComfyUI 目录存在本地改动，已取消更新：\n${status}`);
+  }
   await appendLog("开始更新 ComfyUI 内核...");
   const outputs = [
-    await run("git", ["fetch", "--tags", "origin"], cwd),
-    await run("git", ["checkout", "master"], cwd),
-    await run("git", ["pull", "--ff-only", "origin", "master"], cwd)
+    await runChecked("git", ["fetch", "--tags", "origin"], cwd),
+    await runChecked("git", ["checkout", "master"], cwd),
+    await runChecked("git", ["pull", "--ff-only", "origin", "master"], cwd)
   ].filter(Boolean);
-  const text = outputs.join("\n\n") || "ComfyUI 内核更新命令已完成";
+  const text = outputs.join("\n\n") || "ComfyUI 内核更新完成";
   await appendLog(text);
   return text;
 }
@@ -532,6 +586,7 @@ async function stopComfy() {
     externalComfyPid = null;
     currentUrl = null;
   }
+  updateTrayMenu();
   return runtimeStatus();
 }
 
@@ -546,63 +601,23 @@ function run(command: string, args: string[], cwd?: string): Promise<string> {
   });
 }
 
+function runChecked(command: string, args: string[], cwd?: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { cwd, windowsHide: true, env: { ...process.env, PYTHONIOENCODING: "utf-8" } });
+    let output = "";
+    child.stdout.on("data", (data) => (output += String(data)));
+    child.stderr.on("data", (data) => (output += String(data)));
+    child.on("close", (code) => {
+      const text = output.trim();
+      if (code === 0) resolve(text);
+      else reject(new Error(text || `${command} ${args.join(" ")} failed with code ${code}`));
+    });
+    child.on("error", reject);
+  });
+}
+
 async function scanPlugins(instance: LauncherInstance): Promise<PluginInfo[]> {
-  const root = path.join(instance.comfyuiPath, "custom_nodes");
-  const disabledRoot = path.join(root, ".disabled");
-  const rows: PluginInfo[] = [];
-  async function scan(parent: string, enabled: boolean) {
-    if (!(await exists(parent))) return;
-    const entries = await fs.readdir(parent, { withFileTypes: true });
-    const plugins = entries.filter((entry) => entry.isDirectory() && entry.name !== "__pycache__" && entry.name !== ".disabled");
-    const scanned = await Promise.all(plugins.map(async (entry) => {
-      const pluginPath = path.join(parent, entry.name);
-      const isGit = await exists(path.join(pluginPath, ".git"));
-      const [branch, remote, commit] = isGit
-        ? await Promise.all([
-            run("git", ["rev-parse", "--abbrev-ref", "HEAD"], pluginPath),
-            run("git", ["remote", "get-url", "origin"], pluginPath),
-            run("git", ["rev-parse", "--short", "HEAD"], pluginPath)
-          ])
-        : ["", "", ""];
-      const hasRequirements = await exists(path.join(pluginPath, "requirements.txt"));
-      const problems = [
-        ...(isGit && branch === "HEAD" ? ["detached HEAD"] : []),
-        ...(isGit && !remote ? ["缺少 origin remote"] : [])
-      ];
-      return {
-        name: entry.name,
-        path: pluginPath,
-        enabled,
-        isGit,
-        branch,
-        commit,
-        status: isGit ? "Git 插件" : "本地插件",
-        remote,
-        hasRequirements,
-        health: {
-          problems,
-          duplicateKeys: [],
-          detachedHead: branch === "HEAD",
-          missingRemote: isGit && !remote
-        }
-      } as PluginInfo;
-    }));
-    rows.push(...scanned.filter(Boolean) as PluginInfo[]);
-  }
-  await scan(root, true);
-  await scan(disabledRoot, false);
-  const nameCounts = new Map<string, number>();
-  const remoteCounts = new Map<string, number>();
-  for (const row of rows) {
-    nameCounts.set(row.name.toLowerCase(), (nameCounts.get(row.name.toLowerCase()) || 0) + 1);
-    if (row.remote) remoteCounts.set(row.remote, (remoteCounts.get(row.remote) || 0) + 1);
-  }
-  for (const row of rows) {
-    if ((nameCounts.get(row.name.toLowerCase()) || 0) > 1) row.health.duplicateKeys.push("同名插件");
-    if (row.remote && (remoteCounts.get(row.remote) || 0) > 1) row.health.duplicateKeys.push("同 Git remote");
-    if (row.health.duplicateKeys.length) row.health.problems.push(`重复: ${row.health.duplicateKeys.join(", ")}`);
-  }
-  return rows.sort((a, b) => a.name.localeCompare(b.name));
+  return domain.scanPlugins(instance, (args: string[], cwd?: string) => run("git", args, cwd));
 }
 
 async function copyDir(from: string, to: string) {
@@ -654,15 +669,7 @@ async function restoreBackup(instance: LauncherInstance, backupPath: string) {
 }
 
 async function togglePlugin(instance: LauncherInstance, name: string, enable: boolean) {
-  const customNodes = path.join(instance.comfyuiPath, "custom_nodes");
-  const enabledPath = path.join(customNodes, name);
-  const disabledPath = path.join(customNodes, ".disabled", name);
-  await fs.mkdir(path.dirname(disabledPath), { recursive: true });
-  if (enable && !(await exists(disabledPath)) && (await exists(enabledPath))) return scanPlugins(instance);
-  if (!enable && !(await exists(enabledPath)) && (await exists(disabledPath))) return scanPlugins(instance);
-  if (enable) await fs.rename(disabledPath, enabledPath);
-  else await fs.rename(enabledPath, disabledPath);
-  return scanPlugins(instance);
+  return domain.togglePlugin(instance, name, enable);
 }
 
 async function tryTogglePlugin(instance: LauncherInstance, name: string, enable: boolean) {
@@ -679,41 +686,11 @@ async function tryTogglePlugin(instance: LauncherInstance, name: string, enable:
 }
 
 async function previewMode(instance: LauncherInstance, mode: LauncherMode): Promise<ModePreview> {
-  const plugins = await scanPlugins(instance);
-  const byName = new Map(plugins.map((plugin) => [plugin.name, plugin]));
-  const desiredEnabled = new Set(mode.enabledPlugins || []);
-  const disabled = new Set(mode.disabledPlugins || []);
-  const enable: string[] = [];
-  const disable: string[] = [];
-  const unchanged: string[] = [];
-  const missing: string[] = [];
-  for (const plugin of plugins) {
-    const shouldEnable = mode.applyStrategy === "enabled-only" ? desiredEnabled.has(plugin.name) : !disabled.has(plugin.name);
-    if (shouldEnable && !plugin.enabled) enable.push(plugin.name);
-    else if (!shouldEnable && plugin.enabled) disable.push(plugin.name);
-    else unchanged.push(plugin.name);
-  }
-  for (const name of [...desiredEnabled, ...disabled]) {
-    if (!byName.has(name)) missing.push(name);
-  }
-  return { enable, disable, unchanged, missing };
+  return domain.previewMode(instance, mode);
 }
 
 async function applyMode(instance: LauncherInstance, mode: LauncherMode) {
-  const preview = await previewMode(instance, mode);
-  const failures: string[] = [];
-  for (const name of preview.enable) {
-    const failure = await tryTogglePlugin(instance, name, true);
-    if (failure) failures.push(failure);
-  }
-  for (const name of preview.disable) {
-    const failure = await tryTogglePlugin(instance, name, false);
-    if (failure) failures.push(failure);
-  }
-  if (failures.length) {
-    await appendLog(`模式已部分应用，${failures.length} 个插件移动失败。请先停止 ComfyUI 或关闭占用目录的程序后重试。`);
-  }
-  return scanPlugins(instance);
+  return domain.applyMode(instance, mode, appendLog);
 }
 
 async function duplicateMode(config: LauncherConfig, modeId: string) {
@@ -734,14 +711,14 @@ async function installPlugin(instance: LauncherInstance, repoUrl: string) {
   const target = path.join(instance.comfyuiPath, "custom_nodes", name);
   if (await exists(target)) throw new Error("目标插件目录已存在");
   await appendLog(`安装插件: ${repoUrl}`);
-  await run("git", ["clone", repoUrl, target], instance.comfyuiPath);
+  await runChecked("git", ["clone", repoUrl, target], instance.comfyuiPath);
   return scanPlugins(instance);
 }
 
 async function updatePlugin(pluginPath: string) {
   await backupPlugin(pluginPath);
   await appendLog(`更新插件: ${pluginPath}`);
-  return run("git", ["pull", "--ff-only"], pluginPath);
+  return runChecked("git", ["pull", "--ff-only"], pluginPath);
 }
 
 async function repairGit(pluginPath: string) {
@@ -756,27 +733,39 @@ async function repairGit(pluginPath: string) {
 async function bindRemote(pluginPath: string, remoteUrl: string) {
   const hasOrigin = await run("git", ["remote", "get-url", "origin"], pluginPath);
   if (hasOrigin && !hasOrigin.includes("No such remote")) {
-    return run("git", ["remote", "set-url", "origin", remoteUrl], pluginPath);
+    return runChecked("git", ["remote", "set-url", "origin", remoteUrl], pluginPath);
   }
-  return run("git", ["remote", "add", "origin", remoteUrl], pluginPath);
+  return runChecked("git", ["remote", "add", "origin", remoteUrl], pluginPath);
 }
 
 async function installPluginRequirements(instance: LauncherInstance, pluginPath: string) {
   const requirements = path.join(pluginPath, "requirements.txt");
   if (!(await exists(requirements))) throw new Error("插件没有 requirements.txt");
   await appendLog(`安装插件依赖: ${requirements}`);
-  return run(instance.pythonPath, ["-m", "pip", "install", "-r", requirements]);
+  return runChecked(instance.pythonPath, ["-m", "pip", "install", "-r", requirements]);
 }
 
 async function keyPackages(pythonPath: string): Promise<EnvironmentPackage[]> {
   const names = ["torch", "torchvision", "torchaudio", "xformers", "triton", "sageattention", "nunchaku"];
+  const unknownPackages = () => names.map((name) => ({ name, version: "未检测" }));
+  if (!pythonPath || !(await exists(pythonPath))) return unknownPackages();
+
   const script = `import importlib.metadata as m\nfor n in ${JSON.stringify(names)}:\n    try:\n        version = m.version(n)\n        version = version.encode("ascii", "replace").decode("ascii")\n        print(f"{n}=={version}")\n    except Exception:\n        print(f"{n}==not installed")`;
   const output = await run(pythonPath, ["-c", script]);
-  return output.split(/\r?\n/).filter(Boolean).map((line) => {
+  const parsed = output.split(/\r?\n/).filter(Boolean).map((line) => {
     const [name, ...rest] = line.split("==");
+    if (!names.includes(name) || !rest.length) return null;
     const version = rest.join("==") || "unknown";
     return { name, version: version === "not installed" ? "未安装" : version };
-  });
+  }).filter((item): item is EnvironmentPackage => Boolean(item));
+
+  if (!parsed.length) {
+    await appendLog("Python 关键包检测失败：请检查 Python 路径是否指向 ComfyUI 使用的 python.exe");
+    return unknownPackages();
+  }
+
+  const byName = new Map(parsed.map((pkg) => [pkg.name, pkg.version]));
+  return names.map((name) => ({ name, version: byName.get(name) || "未检测" }));
 }
 
 async function installTool(instance: LauncherInstance, tool: string) {
@@ -791,7 +780,7 @@ async function installTool(instance: LauncherInstance, tool: string) {
   const args = commands[tool];
   if (!args) throw new Error(`未知工具: ${tool}`);
   await appendLog(`安装环境组件: ${tool}`);
-  const output = await run(instance.pythonPath, args);
+  const output = await runChecked(instance.pythonPath, args);
   await appendLog(output || `${tool} 安装命令已结束`);
   return output;
 }
@@ -800,123 +789,32 @@ async function syncComfyConfig(instance: LauncherInstance) {
   return syncModelPathConfig(instance);
 }
 
-async function analyzeWorkflow(instance: LauncherInstance, filePath: string): Promise<WorkflowAnalysisResult> {
-  const raw = JSON.parse(await fs.readFile(filePath, "utf8"));
-  const nodeTypes = new Set<string>();
-  function visit(value: any) {
-    if (!value || typeof value !== "object") return;
-    if (typeof value.class_type === "string") nodeTypes.add(value.class_type);
-    if (typeof value.type === "string" && value.widgets_values) nodeTypes.add(value.type);
-    for (const child of Object.values(value)) visit(child);
-  }
-  visit(raw);
-
-  const installed = await scanPlugins(instance);
-  const pluginNames = new Set(installed.map((plugin) => plugin.name));
-  const localMappings: Record<string, string> = {};
-  const suggested = new Set<string>();
-  const matched = new Set<string>();
-  const missing: string[] = [];
-  for (const nodeType of nodeTypes) {
-    const mapped = localMappings[nodeType];
-    if (mapped) {
-      suggested.add(mapped);
-      if (pluginNames.has(mapped)) matched.add(mapped);
-      else missing.push(nodeType);
-    } else {
-      missing.push(nodeType);
-    }
-  }
-  return {
-    filePath,
-    nodeTypes: [...nodeTypes].sort(),
-    missingNodeTypes: [...new Set(missing)].sort(),
-    matchedPlugins: [...matched].sort(),
-    suggestedPlugins: [...suggested].sort()
-  };
+async function loadWorkflowMappings(instance: LauncherInstance) {
+  return domain.loadWorkflowMappings(instance, appendLog);
 }
 
-const mediaExtensions = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif", ".mp4", ".webm", ".mov"]);
-const videoExtensions = new Set([".mp4", ".webm", ".mov"]);
-const modelExtensions = new Set([".safetensors", ".ckpt", ".pt", ".pth", ".bin", ".gguf", ".onnx", ".vae", ".sft"]);
+async function analyzeWorkflow(instance: LauncherInstance, filePath: string): Promise<WorkflowAnalysisResult> {
+  return domain.analyzeWorkflow(instance, filePath, appendLog);
+}
 
 function outputFolders(instance: LauncherInstance) {
-  const base = path.join(instance.comfyuiPath, "output");
-  const refs = (instance.pathReferences || [])
-    .filter((ref) => ref.enabled && ref.kind === "outputs" && ref.path)
-    .map((ref) => ref.path);
-  return [...new Set([base, ...refs])];
+  return domain.outputFolders(instance);
 }
 
 async function listMedia(instance: LauncherInstance): Promise<MediaItem[]> {
-  const rows: MediaItem[] = [];
-  async function walk(folder: string, depth = 0) {
-    if (depth > 2 || rows.length >= 220 || !(await exists(folder))) return;
-    const entries = await fs.readdir(folder, { withFileTypes: true });
-    for (const entry of entries) {
-      const full = path.join(folder, entry.name);
-      if (entry.isDirectory()) {
-        await walk(full, depth + 1);
-        continue;
-      }
-      const ext = path.extname(entry.name).toLowerCase();
-      if (!mediaExtensions.has(ext)) continue;
-      const stat = await fs.stat(full);
-      rows.push({
-        name: entry.name,
-        path: full,
-        fileUrl: pathToFileURL(full).toString(),
-        type: videoExtensions.has(ext) ? "video" : "image",
-        size: stat.size,
-        modifiedAt: stat.mtime.toISOString()
-      });
-    }
-  }
-  for (const folder of outputFolders(instance)) await walk(folder);
-  return rows.sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt)).slice(0, 220);
+  return domain.listMedia(instance);
 }
 
 function modelFolders(instance: LauncherInstance) {
-  const base = path.join(instance.comfyuiPath, "models");
-  const refs = (instance.pathReferences || [])
-    .filter((ref) => ref.enabled && ref.kind === "models" && ref.path)
-    .map((ref) => ref.path);
-  return [...new Set([base, ...refs])];
+  return domain.modelFolders(instance);
 }
 
 async function listModels(instance: LauncherInstance): Promise<ModelItem[]> {
-  const rows: ModelItem[] = [];
-  async function walk(root: string, folder: string, depth = 0) {
-    if (depth > 4 || rows.length >= 1500 || !(await exists(folder))) return;
-    const entries = await fs.readdir(folder, { withFileTypes: true });
-    for (const entry of entries) {
-      const full = path.join(folder, entry.name);
-      if (entry.isDirectory()) {
-        await walk(root, full, depth + 1);
-        continue;
-      }
-      const ext = path.extname(entry.name).toLowerCase();
-      if (!modelExtensions.has(ext)) continue;
-      const stat = await fs.stat(full);
-      const relative = path.relative(root, full);
-      const category = relative.split(path.sep)[0] || "models";
-      rows.push({
-        name: entry.name,
-        path: full,
-        category,
-        size: stat.size,
-        modifiedAt: stat.mtime.toISOString()
-      });
-    }
-  }
-  for (const folder of modelFolders(instance)) await walk(folder, folder);
-  return rows.sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt));
+  return domain.listModels(instance);
 }
 
 async function deleteMedia(target: string) {
-  if (!(await exists(target))) return false;
-  await fs.rm(target, { force: true });
-  return true;
+  return domain.deleteMedia(target);
 }
 
 function revealInFolder(target: string) {
@@ -926,25 +824,7 @@ function revealInFolder(target: string) {
 }
 
 async function comfyHistory(instance: LauncherInstance): Promise<HistoryItem[]> {
-  try {
-    const json: any = await fetchJson(`${instanceUrl(instance)}/history`);
-    return Object.entries<any>(json)
-      .slice(-80)
-      .reverse()
-      .map(([idValue, item]) => {
-        const outputs = item?.outputs && typeof item.outputs === "object" ? Object.values<any>(item.outputs) : [];
-        const outputCount = outputs.reduce((count, output) => {
-          const images = Array.isArray(output?.images) ? output.images.length : 0;
-          const videos = Array.isArray(output?.videos) ? output.videos.length : 0;
-          return count + images + videos;
-        }, 0);
-        const prompt = Array.isArray(item?.prompt) ? item.prompt[2] : null;
-        const nodeCount = prompt && typeof prompt === "object" ? Object.keys(prompt).length : 0;
-        return { id: idValue, outputCount, nodeCount };
-      });
-  } catch {
-    return [];
-  }
+  return comfyApi.comfyHistory(instance);
 }
 
 async function listDir(target: string): Promise<DirEntry[]> {
@@ -982,14 +862,21 @@ async function selectFile(filters?: Electron.FileFilter[]) {
 }
 
 async function createWindow() {
-  const iconPath = fssync.existsSync(path.join(__dirname, "transparent.ico"))
-    ? path.join(__dirname, "transparent.ico")
-    : path.join(__dirname, "../electron/transparent.ico");
+  const localIconPath = path.join(__dirname, "app-icon.ico");
+  const packagedIconPath = path.join(__dirname, "../electron/app-icon.ico");
+  const legacyIconPath = path.join(__dirname, "../electron/transparent.ico");
+  const iconPath = fssync.existsSync(localIconPath)
+    ? localIconPath
+    : fssync.existsSync(packagedIconPath)
+      ? packagedIconPath
+      : fssync.existsSync(legacyIconPath)
+        ? legacyIconPath
+        : undefined;
   mainWindow = new BrowserWindow({
-    width: 1420,
-    height: 860,
-    minWidth: 1320,
-    minHeight: 720,
+    width: process.env.COMFY_STATION_SMOKE ? Number(process.env.COMFY_STATION_SMOKE_WIDTH || 1500) : 1500,
+    height: process.env.COMFY_STATION_SMOKE ? Number(process.env.COMFY_STATION_SMOKE_HEIGHT || 860) : 860,
+    minWidth: 1120,
+    minHeight: 680,
     minimizable: true,
     maximizable: true,
     resizable: true,
@@ -1004,6 +891,93 @@ async function createWindow() {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
       nodeIntegration: false
+    }
+  });
+  if (process.env.COMFY_STATION_SMOKE) {
+    mainWindow.setBounds({ x: 0, y: 0, width: Number(process.env.COMFY_STATION_SMOKE_WIDTH || 1500), height: Number(process.env.COMFY_STATION_SMOKE_HEIGHT || 860) });
+  }
+  mainWindow.webContents.once("did-finish-load", async () => {
+    if (!process.env.COMFY_STATION_SMOKE) return;
+    const config = await loadConfig();
+    const reportPath = path.join(userData(), "smoke-report.json");
+    const screenshotPath = path.join(userData(), "smoke-screenshot.png");
+    let screenshotBuffer: Uint8Array = Buffer.alloc(0);
+    mainWindow?.show();
+    mainWindow?.focus();
+    await mainWindow?.webContents.executeJavaScript(
+      "new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))"
+    ).catch(() => undefined);
+    const smokeDelay = Math.max(0, Number(process.env.COMFY_STATION_SMOKE_DELAY_MS || 3500));
+    if (smokeDelay) await new Promise((resolve) => setTimeout(resolve, smokeDelay));
+    if (process.env.COMFY_STATION_SMOKE_SCENARIO === "tasks") {
+      await mainWindow?.webContents.executeJavaScript(`(async () => {
+        document.querySelector('button[title="保存配置"]')?.click();
+        await new Promise(resolve => setTimeout(resolve, 700));
+        document.querySelector('.task-trigger')?.click();
+        await new Promise(resolve => setTimeout(resolve, 200));
+      })()`);
+    }
+    if (process.env.COMFY_STATION_SMOKE_WORKFLOW) {
+      await mainWindow?.webContents.executeJavaScript(`(async () => {
+        const input = document.querySelector('.workflow-panel input');
+        if (!input) throw new Error('Workflow input not found');
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, ${JSON.stringify(process.env.COMFY_STATION_SMOKE_WORKFLOW)});
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        await new Promise(resolve => setTimeout(resolve, 100));
+        document.querySelector('.workflow-panel .primary')?.click();
+        for (let i = 0; i < 100; i++) {
+          if (document.querySelector('.workflow-models')) return;
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+        throw new Error('Workflow analysis timed out');
+      })()`);
+    }
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      const screenshot = await mainWindow?.webContents.capturePage();
+      if (screenshot && !screenshot.isEmpty()) {
+        screenshotBuffer = screenshot.toPNG();
+        if (screenshotBuffer.byteLength > 0) break;
+      }
+    }
+    const bodyText = await mainWindow?.webContents.executeJavaScript(
+      "document.body ? document.body.innerText.slice(0, 2000) : ''"
+    ).catch(() => "");
+    const layout = await mainWindow?.webContents.executeJavaScript(`(() => {
+      const rect = (selector) => {
+        const node = document.querySelector(selector);
+        if (!node) return null;
+        const r = node.getBoundingClientRect();
+        return { x: r.x, y: r.y, width: r.width, height: r.height, right: r.right, bottom: r.bottom };
+      };
+      return { viewport: { width: innerWidth, height: innerHeight },
+        center: rect('.center'), models: rect('.model-table'), categories: rect('.model-cats'),
+        actions: rect('.env-actions'), environment: rect('.env-main'),
+        horizontalOverflow: document.documentElement.scrollWidth > innerWidth,
+        pluginOverflow: [...document.querySelectorAll('.plugin-row')].some(row => row.scrollHeight > row.clientHeight + 2)
+      };
+    })()`);
+    await fs.writeFile(screenshotPath, screenshotBuffer);
+    await fs.writeFile(reportPath, JSON.stringify({
+      loaded: true,
+      title: mainWindow?.getTitle() || "",
+      bounds: mainWindow?.getBounds(),
+      layout,
+      smokeDelay,
+      screenshotPath,
+      screenshotBytes: screenshotBuffer.byteLength,
+      uiActiveView: config.ui?.activeView || "",
+      bodyText,
+      configExists: fssync.existsSync(dataPath()),
+      instances: config.instances.length,
+      modes: config.modes.length,
+      firstInstanceName: config.instances[0]?.name || "",
+      firstInstancePath: config.instances[0]?.comfyuiPath || "",
+      firstModeName: config.modes[0]?.name || ""
+    }, null, 2), "utf8");
+    if (process.env.COMFY_STATION_SMOKE_EXIT !== "0") {
+      isQuitting = true;
+      app.quit();
     }
   });
   if (process.env.VITE_DEV_SERVER_URL) {
@@ -1024,22 +998,47 @@ async function createWindow() {
   createTray(iconPath);
 }
 
-function createTray(iconPath: string) {
+function createTray(iconPath?: string) {
   if (tray) return;
-  tray = new Tray(iconPath);
+  let image = iconPath ? nativeImage.createFromPath(iconPath) : nativeImage.createEmpty();
+  if (image.isEmpty()) image = nativeImage.createFromDataURL(appIconFallbackDataUrl);
+  tray = new Tray(image);
   tray.setToolTip("Comfy Station Launcher Next");
+  updateTrayMenu();
+  tray.on("click", showMainWindow);
+}
+
+function updateTrayMenu() {
+  if (!tray) return;
+  const instance = activeInstanceFromDisk();
+  const status = runtimeStatus();
   tray.setContextMenu(Menu.buildFromTemplate([
-    { label: "显示窗口", click: showMainWindow },
+    { label: status.running ? "ComfyUI \u8fd0\u884c\u4e2d " + (currentUrl || "") : "ComfyUI \u672a\u542f\u52a8", enabled: false },
+    { type: "separator" },
+    { label: "\u663e\u793a\u7a97\u53e3", click: showMainWindow },
+    { label: "\u6253\u5f00\u7f51\u9875", enabled: Boolean(currentUrl), click: () => openComfyWeb(instance?.browserChoice, instance?.browserPath) },
+    {
+      label: status.running ? "\u505c\u6b62 ComfyUI" : "\u542f\u52a8 ComfyUI",
+      enabled: Boolean(instance?.comfyuiPath && instance?.pythonPath),
+      click: async () => {
+        try {
+          if (runtimeStatus().running) await stopComfy();
+          else if (instance) await startComfy(instance);
+          updateTrayMenu();
+        } catch (error) {
+          await appendLog(error instanceof Error ? error.message : String(error));
+        }
+      }
+    },
     { type: "separator" },
     {
-      label: "退出",
+      label: "\u9000\u51fa",
       click: () => {
         isQuitting = true;
         app.quit();
       }
     }
   ]));
-  tray.on("click", showMainWindow);
 }
 
 app.whenReady().then(async () => {
@@ -1062,6 +1061,9 @@ app.on("window-all-closed", () => {
 
 ipcMain.handle("config:load", loadConfig);
 ipcMain.handle("config:save", (_event, config: LauncherConfig) => saveConfig(config));
+ipcMain.handle("config:export", exportConfig);
+ipcMain.handle("config:import", importConfig);
+ipcMain.handle("config:reset", resetConfig);
 function windowFromEvent(event: IpcMainEvent) {
   return BrowserWindow.fromWebContents(event.sender) || mainWindow;
 }
@@ -1128,6 +1130,8 @@ ipcMain.on("window:toggleMaximize", (event) => {
   }, 120);
 });
 ipcMain.on("window:close", (event) => windowFromEvent(event)?.close());
+ipcMain.handle("app:checkUpdate", checkAppUpdate);
+ipcMain.handle("app:openExternal", (_event, url: string) => openExternalSafe(url));
 ipcMain.handle("comfy:start", (_event, instance: LauncherInstance) => startComfy(instance));
 ipcMain.handle("comfy:stop", stopComfy);
 ipcMain.handle("comfy:status", () => runtimeStatus());
@@ -1145,6 +1149,7 @@ ipcMain.handle("comfy:clearHistory", (_event, instance: LauncherInstance) => cle
 ipcMain.handle("browser:list", () => browserCandidates());
 ipcMain.handle("filesystem:openPath", (_event, target: string) => shell.openPath(target));
 ipcMain.handle("filesystem:listDir", (_event, target: string) => listDir(target));
+ipcMain.handle("filesystem:exists", (_event, target: string) => exists(target));
 ipcMain.handle("filesystem:selectFolder", selectFolder);
 ipcMain.handle("filesystem:selectFile", (_event, filters?: Electron.FileFilter[]) => selectFile(filters));
 ipcMain.handle("plugins:scan", (_event, instance: LauncherInstance) => scanPlugins(instance));
@@ -1186,4 +1191,5 @@ ipcMain.handle("logs:clear", () => {
   logBuffer = [];
   return logBuffer;
 });
-ipcMain.handle("logs:export", async () => logsRoot());
+ipcMain.handle("logs:export", exportLogs);
+ipcMain.handle("notifications:show", (_event, title: string, body: string) => showNotification(title, body));

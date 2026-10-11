@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - "codex/**"
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    name: Windows quality gate
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: App model regression
+        run: npm run test:app-model
+
+      - name: Domain regression
+        run: npm run test:domain
+
+      - name: ComfyUI API regression
+        run: npm run test:comfy-api
+
+      - name: Electron smoke test
+        run: npm run test:electron-smoke
+
+      - name: Configuration and task history regression
+        run: npm run test:refactor

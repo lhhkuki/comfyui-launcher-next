@@ -28,6 +28,8 @@ It does not bundle ComfyUI, does not require an online account, and does not aut
 
 ![ComfyUI Launcher Next preview](./launcher-next-workstation-preview.png)
 
+Screenshots show a fully loaded example environment in 0.1.3, not a user's real models or configuration.
+
 ## Why This Exists
 
 Running ComfyUI locally usually means juggling a terminal window, a browser tab, plugin folders, Git commands, Python packages, model directories, and output files. This project puts those daily tasks behind a compact desktop UI:
@@ -46,8 +48,9 @@ Download the latest build from [Releases](https://github.com/lhhkuki/comfyui-lau
 Available assets:
 
 ```text
-ComfyUI.Launcher.Next.Setup.0.1.0.exe
-ComfyUI.Launcher.Next.0.1.0.Portable.zip
+ComfyUI Launcher Next Setup 0.1.3.exe
+ComfyUI Launcher Next 0.1.3 Portable.zip
+SHA256SUMS.txt
 ```
 
 Choose the installer if you want Start Menu and desktop shortcuts. Choose the portable ZIP if you prefer to unzip and run the app directly.
@@ -56,11 +59,11 @@ The installer is currently unsigned, so Windows SmartScreen may show a warning. 
 
 ## Quick Start
 
-1. Open **Settings**.
-2. Set **ComfyUI Path** to the folder containing `main.py`.
-3. Set **Python Path** to the Python executable for that ComfyUI environment.
-4. Save the configuration.
-5. Open **Console** and click **Start**.
+1. Open the app and complete the first-run setup wizard.
+2. Click **Select ComfyUI Folder** and choose the folder containing `main.py`.
+3. The app tries to detect common Python locations such as `python_embeded\python.exe`, `.venv\Scripts\python.exe`, and `venv\Scripts\python.exe`.
+4. Check the wizard diagnostics for `main.py`, Python, `models`, `custom_nodes`, `input`, `output`, and `user`.
+5. Save the configuration, then open **Console** and click **Start**.
 
 Typical portable ComfyUI paths:
 
@@ -74,6 +77,7 @@ D:\ComfyUI_windows_portable\python_embeded\python.exe
 ### Environment Management
 
 - Create and manage multiple local ComfyUI environments.
+- Use a first-run wizard that checks `main.py`, Python, and common ComfyUI folders before launch.
 - Store ComfyUI path, Python path, port, GPU, browser, proxy, Hugging Face mirror, VRAM mode, and extra launch arguments per environment.
 - Use the system browser, a detected browser, or a custom browser path.
 - Keep configuration local under Electron's user data folder.
@@ -129,8 +133,20 @@ D:\ComfyUI_windows_portable\python_embeded\python.exe
 - Select a workflow JSON file.
 - Parse node types from the workflow.
 - Compare nodes against locally installed plugins.
-- Show matched plugins, missing nodes, and suggested handling items.
-- Create a temporary mode from locally matched plugins.
+- Distinguish matched plugins, nodes mapped to missing plugins, and unverified nodes. Unknown built-in nodes are not automatically classified as missing.
+- Identify model filename candidates and check for matching names in local and referenced model folders.
+- Jump to plugin maintenance, the model browser, or the runtime console.
+- Create a temporary mode from locally matched plugins. Incomplete analysis uses a conservative mode that preserves the current state of other plugins.
+- Static analysis does not guarantee execution or verify model versions, hashes, or compatibility.
+
+### Task Center
+
+- Open **Task Center** at the right end of the bottom status bar. While operations are running, the entry shows the active task count.
+- Review operation states, failure reasons, environment names, and elapsed time.
+- Keep the latest 80 finished task records locally. Unfinished tasks from the previous session are marked as unconfirmed and are never retried automatically.
+- Clear finished records or open the log console. Subprocess cancellation and installation percentages are not supported yet.
+
+![Task Center example](./docs/screenshots/task-center.png)
 
 ### Model Browser
 
@@ -155,6 +171,12 @@ D:\ComfyUI_windows_portable\python_embeded\python.exe
 - Install plugin requirements.
 - Run common dependency installation commands.
 - Inspect and update the ComfyUI Git core.
+
+### Settings And Updates
+
+- Export, import, and reset the app configuration.
+- Copy the current configuration JSON for troubleshooting.
+- Check the latest GitHub Release and manually open the release page for downloads.
 
 ## Screenshots
 
@@ -191,6 +213,7 @@ Important files and folders:
 - Plugin disable and enable actions move directories between `custom_nodes` and `custom_nodes\.disabled`.
 - Dependency installation uses the Python executable configured for the selected environment.
 - The app does not automatically choose every Torch/CUDA variant. Check package commands before running them.
+- The app can check GitHub Releases, but it does not silently replace or self-update the installed executable.
 - Keep your own backups for important production environments.
 
 ## Development
@@ -207,11 +230,19 @@ Run in development mode:
 npm run dev
 ```
 
-Type-check and build:
+Run the full quality gate:
 
 ```powershell
-npm run typecheck
-npm run build
+npm run test
+```
+
+Run individual regression checks when needed:
+
+```powershell
+npm run test:app-model
+npm run test:domain
+npm run test:comfy-api
+npm run test:electron-smoke
 ```
 
 Create Windows release artifacts:
