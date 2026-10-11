@@ -152,7 +152,7 @@ $checksumAssets = @($zipPath)
 if (Test-Path -LiteralPath $installerPath) { $checksumAssets += $installerPath }
 $checksumLines = foreach ($asset in $checksumAssets) {
   $hash = (Get-FileHash -LiteralPath $asset -Algorithm SHA256).Hash.ToLowerInvariant()
-  "$hash  $([System.IO.Path]::GetFileName($asset))"
+  "$hash  $([System.IO.Path]::GetFileName($asset).Replace(' ', '.'))"
 }
 $checksumLines | Set-Content -LiteralPath (Join-Path $release "SHA256SUMS.txt") -Encoding ascii
 if ($env:GITHUB_ACTIONS -eq "true" -and !(Test-Path $installerPath)) {

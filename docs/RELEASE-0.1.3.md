@@ -27,6 +27,7 @@
 - 安装版：`ComfyUI Launcher Next Setup 0.1.3.exe`
 - 便携版：`ComfyUI Launcher Next 0.1.3 Portable.zip`，完整解压后运行，不能只移动 EXE。
 - 文件校验：`SHA256SUMS.txt`。
+- GitHub 会将下载文件名中的空格替换为点，校验清单采用 GitHub 下载后的文件名。
 - 安装包未签名，Windows 可能提示 SmartScreen 警告。
 - 类型、构建、回归及 1280×800、1440×900、1920×1080 的布局测试通过；使用独立示例环境，不代表所有真实 Python/CUDA 组合已验证。
 
@@ -50,4 +51,5 @@
 - No subprocess cancellation, installation percentages, or persistent per-task full logs yet.
 - Workflows are not automatically submitted. Continue editing and generating in ComfyUI.
 - Windows packages are unsigned. Fully extract the portable ZIP and keep its resource folders.
+- GitHub replaces spaces in asset filenames with dots; the SHA-256 manifest uses those downloaded filenames.
 - Tests used isolated example environments; real-world Python/CUDA combinations still need user validation.
